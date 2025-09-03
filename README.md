@@ -45,9 +45,15 @@ Run the script:
 bash
 Copy code
 python main.py
+
+
+📜 License
+This project is licensed under the MIT License – see the LICENSE file for details.
+
+
 👨‍💻 Author
 Okes Imoni
 GitHub: github.com/Okes2024
 
-📜 License
-This project is licensed under the MIT License – see the LICENSE file for details.
+
+
