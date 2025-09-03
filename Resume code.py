@@ -1,0 +1,127 @@
+import os
+import pdfplumber
+import nltk
+import re
+import pandas as pd
+from sklearn.metrics.pairwise import cosine_similarity
+from sentence_transformers import SentenceTransformer
+import matplotlib.pyplot as plt
+
+# Ensure NLTK stopwords are available
+nltk.download('stopwords')
+from nltk.corpus import stopwords
+STOPWORDS = set(stopwords.words('english'))
+
+# Load SBERT model for embedding resumes and culture statements
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
+# Define path to resume folder
+RESUME_DIR = 'resumes/'  # folder should contain .txt or .pdf files
+
+# Define company culture statement
+company_culture = """
+At our company, we value collaboration, innovation, transparency, inclusivity, and a growth mindset. 
+We encourage continuous learning, diversity of thought, and respect for all individuals.
+"""
+
+# Define culture-related keyword categories
+culture_keywords = {
+    'collaboration': ['teamwork', 'collaborate', 'partner', 'group work', 'cross-functional'],
+    'innovation': ['innovative', 'creative', 'ideas', 'disruptive', 'design thinking'],
+    'transparency': ['honest', 'clear', 'open', 'direct', 'authentic'],
+    'inclusivity': ['inclusive', 'diverse', 'equality', 'respectful', 'belonging'],
+    'growth': ['learning', 'adapt', 'grow', 'resilient', 'curious']
+}
+
+# Function to extract text from PDF or TXT
+def extract_text(filepath):
+    text = ""
+    if filepath.lower().endswith('.pdf'):
+        with pdfplumber.open(filepath) as pdf:
+            for page in pdf.pages:
+                text += page.extract_text() or ""
+    elif filepath.lower().endswith('.txt'):
+        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+            text = f.read()
+    return text
+
+# Function to clean and preprocess text
+def preprocess(text):
+    text = re.sub(r'\W+', ' ', text.lower())
+    tokens = [word for word in text.split() if word not in STOPWORDS]
+    return ' '.join(tokens)
+
+# Function to count keyword matches
+def keyword_score(text, keyword_dict):
+    scores = {}
+    low = text.lower()
+    for key, keywords in keyword_dict.items():
+        count = sum(low.count(kw) for kw in keywords)
+        scores[key] = count
+    return scores
+
+def main():
+    # Embed the company culture
+    culture_embedding = model.encode([company_culture])[0]
+
+    # Store all scores
+    results = []
+
+    # Ensure resume directory exists
+    if not os.path.isdir(RESUME_DIR):
+        raise FileNotFoundError(f"Resume directory not found: {RESUME_DIR}")
+
+    # Process resumes
+    for file in os.listdir(RESUME_DIR):
+        if file.lower().endswith('.pdf') or file.lower().endswith('.txt'):
+            path = os.path.join(RESUME_DIR, file)
+            raw_text = extract_text(path)
+            clean_text = preprocess(raw_text)
+
+            # Semantic similarity
+            resume_embedding = model.encode([clean_text])[0]
+            similarity = cosine_similarity([culture_embedding], [resume_embedding])[0][0]
+
+            # Keyword analysis
+            scores = keyword_score(raw_text, culture_keywords)
+            total_keyword_score = sum(scores.values())
+
+            # Record results
+            result = {
+                'filename': file,
+                'similarity_score': round(float(similarity), 3),
+                'keyword_score': int(total_keyword_score),
+                **scores
+            }
+            results.append(result)
+
+    # Create DataFrame
+    df = pd.DataFrame(results)
+    if df.empty:
+        raise ValueError("No resumes processed. Ensure there are .pdf or .txt files in the 'resumes/' folder.")
+
+    # Normalize keyword score safely
+    max_kw = df['keyword_score'].max()
+    kw_norm = (df['keyword_score'] / max_kw) if max_kw > 0 else 0
+
+    df['final_score'] = df['similarity_score'] * 0.6 + kw_norm * 0.4
+    df_sorted = df.sort_values(by='final_score', ascending=False)
+
+    # Export results to Excel
+    df_sorted.to_excel('ranked_resumes_cultural_fit.xlsx', index=False)
+
+    # Plot top 5 candidates
+    top5 = df_sorted.head(5)
+    plt.figure(figsize=(10, 6))
+    plt.bar(top5['filename'], top5['final_score'])
+    plt.title("Top 5 Resume Matches to Company Culture")
+    plt.ylabel("Cultural Fit Score")
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    plt.savefig("top5_resume_fit.png")
+    # plt.show()  # optional: enable for interactive environments
+
+    print("Saved: ranked_resumes_cultural_fit.xlsx, top5_resume_fit.png")
+
+if __name__ == "__main__":
+    main()
